@@ -191,6 +191,40 @@ pub fn read_chatlog_round(
     }
 }
 
+/// Returns the 10 most recent round ids that have logs recorded.
+#[byond_fn]
+pub fn get_recent_roundids(
+    ckey: String
+) -> Vec<ByondValue> {
+    let mut conn = get_mariadb_connection();
+    let query = "WITH ranked_rounds AS (
+            SELECT id, round_id, ROW_NUMBER() OVER (PARTITION BY round_id ORDER BY id DESC) AS rn
+            FROM chatlogs 
+            WHERE target = :ckey
+        )
+        SELECT round_id FROM ranked_rounds WHERE rn = 1 ORDER BY id DESC LIMIT 10";
+
+    let results: Vec<i32> = match conn.exec_map(query, 
+        params! {
+            "ckey" => ckey.clone()
+        },
+        |round_id| (round_id)
+    ) {
+        Ok(results) => results,
+        Err(e) => {
+            error!("Error while trying to get recent round ids for {ckey}: {e}");
+            Vec::new()
+        }
+    };
+
+    let byond_list: Vec<ByondValue> = results
+        .iter()
+        .map(|&b| ByondValue::new_num(b as f32))
+        .collect();
+
+    byond_list
+}
+
 #[byond_fn]
 pub fn v_chatlog_version() -> &'static str {
     const_format!(
