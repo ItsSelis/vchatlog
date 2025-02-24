@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
 use const_format::formatcp as const_format;
 use log::{debug, error, info};
@@ -71,13 +71,14 @@ pub fn write_chatlog(
     };
 
     // Insert chatlog into database
-    let log_query = "INSERT INTO chatlogs (round_id, target, text, text_raw, type) VALUES (:round_id, :target, :text, :text_raw, :type)";
+    let log_query = "INSERT INTO chatlogs (round_id, target, text, text_raw, type, created_at) VALUES (:round_id, :target, :text, :text_raw, :type, :created_at)";
     if let Err(e) = conn.exec_drop(log_query, params! {
         "round_id" => round_id,
         "target" => message_target.to_string(),
         "text" => parsed_data.text,
         "text_raw" => message_html.to_string(),
-        "type" => if message_type.is_empty() { None } else { Some(message_type) }
+        "type" => if message_type.is_empty() { None } else { Some(message_type) },
+        "created_at" => SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|_| std::time::Duration::new(0, 0)).as_millis()
     }) {
         error!("Error while trying to insert chatlog: {e}")
     };
@@ -90,7 +91,7 @@ struct ChatlogEntry {
     round_id: i32,
     text_raw: String,
     msg_type: Option<String>,
-    created_at: String
+    created_at: u128
 }
 
 /// Reads the last n chatlogs of a specific ckey, in the order of how they had been written to the database, disregarding the round_id.
@@ -108,7 +109,6 @@ pub fn read_chatlog(
     let query = "SELECT round_id, text_raw, type, created_at FROM chatlogs WHERE target = :ckey ORDER BY ID ASC LIMIT :length";
     
     let length = length.get_number().unwrap_or_else(|_| 1000.0) as i32;
-    info!("Beginning read chatlog query with length {length} for {ckey}, object = {object}");
     let results = match conn.exec_map(query,
         params! {
             "ckey" => ckey.clone(),
@@ -119,14 +119,11 @@ pub fn read_chatlog(
                 round_id,
                 text_raw,
                 msg_type,
-                created_at 
+                created_at
             } 
         }
     ) {
-        Ok(results) => {
-            info!("Query sucessful");
-            results
-        },
+        Ok(results) => results,
         Err(e) => {
             error!("Error while trying to get last {length} of chatlogs: {e}");
             Vec::new()
@@ -134,7 +131,7 @@ pub fn read_chatlog(
     };
 
     info!("Exporting last {length} messages of {ckey}");
-    fs::create_dir_all("tmp/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
+    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
     if object {
         let json = match serde_json::to_string(&results) {
             Ok(json) => json,
@@ -143,11 +140,11 @@ pub fn read_chatlog(
                 "".to_string()
             }
         };
-        fs::write(format!("tmp/chatlogs/{ckey}.json"), json).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length} as json): {e}") );
+        fs::write(format!("data/chatlogs/{ckey}.json"), json).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length} as json): {e}") );
     } else {
         if rendered {
             fs::write(
-                format!("tmp/chatlogs/{ckey}.html"), 
+                format!("data/chatlogs/{ckey}.html"), 
                 format!(
                     "<!DOCTYPE html><html><head><title>SS13 Chat Log</title></head><body><div class=\"Chat\">{}</div></body></html>",
                     results.iter()
@@ -158,7 +155,7 @@ pub fn read_chatlog(
             ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
         } else {
             fs::write(
-                format!("tmp/chatlogs/{ckey}"), 
+                format!("data/chatlogs/{ckey}"), 
                 format!(
                     "{}",
                     results.iter()
@@ -200,10 +197,10 @@ pub fn read_chatlog_round(
     };
 
     info!("Exporting chatlog for {ckey} for round {parsed_round_id}");
-    fs::create_dir_all("tmp/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
+    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
     if rendered {
         fs::write(
-            format!("tmp/chatlogs/{ckey}-{parsed_round_id}.html"), 
+            format!("data/chatlogs/{ckey}-{parsed_round_id}.html"), 
             format!(
                 "<!DOCTYPE html><html><head><title>SS13 Chat Log - Round {parsed_round_id}</title></head><body><div class=\"Chat\">{}</div></body></html>",
                 results.iter()
@@ -214,7 +211,7 @@ pub fn read_chatlog_round(
         ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for round {parsed_round_id}: {e}") );
     } else {
         fs::write(
-            format!("tmp/chatlogs/{ckey}-{parsed_round_id}"), 
+            format!("data/chatlogs/{ckey}-{parsed_round_id}"), 
             format!(
                 "{}",
                 results.iter()
@@ -258,10 +255,10 @@ pub fn read_chatlog_rounds(
     };
 
     info!("Exporting chatlog for {ckey} for rounds {parsed_start_round}-{parsed_end_round}");
-    fs::create_dir_all("tmp/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
+    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
     if rendered {
         fs::write(
-            format!("tmp/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}.html"), 
+            format!("data/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}.html"), 
             format!(
                 "<!DOCTYPE html><html><head><title>SS13 Chat Log - Rounds {parsed_start_round}-{parsed_end_round}</title></head><body><div class=\"Chat\">{}</div></body></html>",
                 results.iter()
@@ -272,7 +269,7 @@ pub fn read_chatlog_rounds(
         ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for rounds {parsed_start_round}-{parsed_end_round}: {e}") );
     } else {
         fs::write(
-            format!("tmp/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}"), 
+            format!("data/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}"), 
             format!(
                 "{}",
                 results.iter()
