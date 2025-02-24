@@ -4,6 +4,7 @@ use const_format::formatcp as const_format;
 use log::{debug, error, info};
 use meowtonin::ByondValue;
 use mysql::{params, prelude::Queryable};
+use serde::{Deserialize, Serialize};
 
 use crate::{database::get_mariadb_connection, html::parse_html};
 
@@ -49,7 +50,8 @@ fn get_round_id(byond_value: ByondValue) -> i32 {
 pub fn write_chatlog(
     message_target: String,
     message_html: String,
-    message_round_id: ByondValue
+    message_round_id: ByondValue,
+    message_type: String
 ) {
     let round_id = get_round_id(message_round_id);
 
@@ -69,12 +71,13 @@ pub fn write_chatlog(
     };
 
     // Insert chatlog into database
-    let log_query = "INSERT INTO chatlogs (round_id, target, text, text_raw) VALUES (:round_id, :target, :text, :text_raw)";
+    let log_query = "INSERT INTO chatlogs (round_id, target, text, text_raw, type) VALUES (:round_id, :target, :text, :text_raw, :type)";
     if let Err(e) = conn.exec_drop(log_query, params! {
         "round_id" => round_id,
         "target" => message_target.to_string(),
         "text" => parsed_data.text,
-        "text_raw" => message_html.to_string()
+        "text_raw" => message_html.to_string(),
+        "type" => if message_type.is_empty() { None } else { Some(message_type) }
     }) {
         error!("Error while trying to insert chatlog: {e}")
     };
@@ -82,27 +85,48 @@ pub fn write_chatlog(
     debug!("Written chatlog for {message_target} ({round_id}): {message_html}");
 }
 
+#[derive(Serialize, Deserialize)]
+struct ChatlogEntry {
+    round_id: i32,
+    text_raw: String,
+    msg_type: Option<String>,
+    created_at: String
+}
+
 /// Reads the last n chatlogs of a specific ckey, in the order of how they had been written to the database, disregarding the round_id.
 /// 
 /// By default the length of the chatlogs to fetch is 1000.
+/// Set 'object' to true, to get a json result
 #[byond_fn]
 pub fn read_chatlog(
     ckey: String,
     length: ByondValue,
-    rendered: bool
+    rendered: bool,
+    object: bool
 ) {
     let mut conn = get_mariadb_connection();
-    let query = "SELECT TOP (:length) * FROM (SELECT text_raw FROM chatlogs WHERE target = :ckey) AS subquery ORDER BY ID ASC";
+    let query = "SELECT round_id, text_raw, type, created_at FROM chatlogs WHERE target = :ckey ORDER BY ID ASC LIMIT :length";
     
     let length = length.get_number().unwrap_or_else(|_| 1000.0) as i32;
-    let results: Vec<String> = match conn.exec_map(query,
+    info!("Beginning read chatlog query with length {length} for {ckey}, object = {object}");
+    let results = match conn.exec_map(query,
         params! {
-            "length" => length,
-            "ckey" => ckey.clone()
+            "ckey" => ckey.clone(),
+            "length" => length
         },
-        |text_raw| (text_raw)
+        |(round_id, text_raw, msg_type, created_at)| { 
+            ChatlogEntry { 
+                round_id,
+                text_raw,
+                msg_type,
+                created_at 
+            } 
+        }
     ) {
-        Ok(results) => results,
+        Ok(results) => {
+            info!("Query sucessful");
+            results
+        },
         Err(e) => {
             error!("Error while trying to get last {length} of chatlogs: {e}");
             Vec::new()
@@ -111,28 +135,39 @@ pub fn read_chatlog(
 
     info!("Exporting last {length} messages of {ckey}");
     fs::create_dir_all("tmp/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
-    if rendered {
-        fs::write(
-            format!("tmp/chatlogs/{ckey}.html"), 
-            format!(
-                "<!DOCTYPE html><html><head><title>SS13 Chat Log</title></head><body><div class=\"Chat\">{}</div></body></html>",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
-                    .collect::<Vec<String>>()
-                    .join("\n"),
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
+    if object {
+        let json = match serde_json::to_string(&results) {
+            Ok(json) => json,
+            Err(e) => {
+                error!("Error while serializing json: {e}");
+                "".to_string()
+            }
+        };
+        fs::write(format!("tmp/chatlogs/{ckey}.json"), json).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length} as json): {e}") );
     } else {
-        fs::write(
-            format!("tmp/chatlogs/{ckey}"), 
-            format!(
-                "{}",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
+        if rendered {
+            fs::write(
+                format!("tmp/chatlogs/{ckey}.html"), 
+                format!(
+                    "<!DOCTYPE html><html><head><title>SS13 Chat Log</title></head><body><div class=\"Chat\">{}</div></body></html>",
+                    results.iter()
+                        .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg.text_raw))
+                        .collect::<Vec<String>>()
+                        .join("\n"),
+                )
+            ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
+        } else {
+            fs::write(
+                format!("tmp/chatlogs/{ckey}"), 
+                format!(
+                    "{}",
+                    results.iter()
+                        .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg.text_raw))
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                )
+            ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
+        }
     }
 }
 
