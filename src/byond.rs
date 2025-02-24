@@ -191,6 +191,64 @@ pub fn read_chatlog_round(
     }
 }
 
+/// Reads the chatlogs of a specific ckey for a specified range of rounds (start to end, both inclusive).
+/// 
+/// DANGER: Do not give it the round_id of -1 if you did not have round id's set up for a long time. 
+///         Otherwise you might get many results.
+#[byond_fn]
+pub fn read_chatlog_rounds(
+    ckey: String,
+    start_round: ByondValue,
+    end_round: ByondValue,
+    rendered: bool
+) {
+    let mut conn = get_mariadb_connection();
+    let query = "SELECT text_raw FROM chatlogs WHERE round_id BETWEEN :start_round AND :end_round AND target = :ckey ORDER BY ID ASC";
+
+    let parsed_start_round = get_round_id(start_round);
+    let parsed_end_round = get_round_id(end_round);
+    let results: Vec<String> = match conn.exec_map(query,
+        params! {
+            "start_round" => parsed_start_round,
+            "end_round" => parsed_end_round,
+            "ckey" => ckey.clone()
+        },
+        |text_raw| (text_raw)
+    ) {
+        Ok(results) => results,
+        Err(e) => {
+            error!("Error while trying to get chatlogs for rounds {parsed_start_round}-{parsed_end_round}: {e}");
+            Vec::new()
+        }
+    };
+
+    info!("Exporting chatlog for {ckey} for rounds {parsed_start_round}-{parsed_end_round}");
+    fs::create_dir_all("tmp/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
+    if rendered {
+        fs::write(
+            format!("tmp/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}.html"), 
+            format!(
+                "<!DOCTYPE html><html><head><title>SS13 Chat Log - Rounds {parsed_start_round}-{parsed_end_round}</title></head><body><div class=\"Chat\">{}</div></body></html>",
+                results.iter()
+                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .collect::<Vec<String>>()
+                    .join("\n"),
+            )
+        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for rounds {parsed_start_round}-{parsed_end_round}: {e}") );
+    } else {
+        fs::write(
+            format!("tmp/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}"), 
+            format!(
+                "{}",
+                results.iter()
+                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .collect::<Vec<String>>()
+                    .join("\n")
+            )
+        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for rounds {parsed_start_round}-{parsed_end_round}: {e}") );
+    }
+}
+
 /// Returns the 10 most recent round ids that have logs recorded.
 #[byond_fn]
 pub fn get_recent_roundids(
@@ -219,7 +277,7 @@ pub fn get_recent_roundids(
 
     let byond_list: Vec<ByondValue> = results
         .iter()
-        .map(|&b| ByondValue::new_num(b as f32))
+        .map(|&b| ByondValue::new_string(b.to_string()))
         .collect();
 
     byond_list
