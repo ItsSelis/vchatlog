@@ -103,6 +103,7 @@ pub fn read_chatlog(
     ckey: String,
     length: ByondValue,
     rendered: bool,
+    timestamp: bool,
     object: bool
 ) {
     let mut conn = get_mariadb_connection();
@@ -148,7 +149,7 @@ pub fn read_chatlog(
                 format!(
                     "<!DOCTYPE html><html><head><title>SS13 Chat Log</title></head><body><div class=\"Chat\">{}</div></body></html>",
                     results.iter()
-                        .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg.text_raw))
+                        .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                         .collect::<Vec<String>>()
                         .join("\n"),
                 )
@@ -159,7 +160,7 @@ pub fn read_chatlog(
                 format!(
                     "{}",
                     results.iter()
-                        .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg.text_raw))
+                        .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                         .collect::<Vec<String>>()
                         .join("\n")
                 )
@@ -176,18 +177,24 @@ pub fn read_chatlog(
 pub fn read_chatlog_round(
     ckey: String,
     round_id: ByondValue,
+    timestamp: bool,
     rendered: bool
 ) {
     let mut conn = get_mariadb_connection();
-    let query = "SELECT text_raw FROM chatlogs WHERE round_id = :round_id AND target = :ckey ORDER BY ID ASC";
+    let query = "SELECT text_raw, created_at FROM chatlogs WHERE round_id = :round_id AND target = :ckey ORDER BY ID ASC";
 
     let parsed_round_id = get_round_id(round_id);
-    let results: Vec<String> = match conn.exec_map(query,
+    let results = match conn.exec_map(query,
         params! {
             "round_id" => parsed_round_id,
             "ckey" => ckey.clone()
         },
-        |text_raw| (text_raw)
+        |(text_raw, created_at)| ChatlogEntry {
+            round_id: 0,
+            text_raw, 
+            msg_type: None,
+            created_at
+        }
     ) {
         Ok(results) => results,
         Err(e) => {
@@ -204,7 +211,7 @@ pub fn read_chatlog_round(
             format!(
                 "<!DOCTYPE html><html><head><title>SS13 Chat Log - Round {parsed_round_id}</title></head><body><div class=\"Chat\">{}</div></body></html>",
                 results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                     .collect::<Vec<String>>()
                     .join("\n"),
             )
@@ -215,7 +222,7 @@ pub fn read_chatlog_round(
             format!(
                 "{}",
                 results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                     .collect::<Vec<String>>()
                     .join("\n")
             )
@@ -232,20 +239,26 @@ pub fn read_chatlog_rounds(
     ckey: String,
     start_round: ByondValue,
     end_round: ByondValue,
+    timestamp: bool,
     rendered: bool
 ) {
     let mut conn = get_mariadb_connection();
-    let query = "SELECT text_raw FROM chatlogs WHERE round_id BETWEEN :start_round AND :end_round AND target = :ckey ORDER BY ID ASC";
+    let query = "SELECT text_raw, created_at FROM chatlogs WHERE round_id BETWEEN :start_round AND :end_round AND target = :ckey ORDER BY ID ASC";
 
     let parsed_start_round = get_round_id(start_round);
     let parsed_end_round = get_round_id(end_round);
-    let results: Vec<String> = match conn.exec_map(query,
+    let results = match conn.exec_map(query,
         params! {
             "start_round" => parsed_start_round,
             "end_round" => parsed_end_round,
             "ckey" => ckey.clone()
         },
-        |text_raw| (text_raw)
+        |(text_raw, created_at)| ChatlogEntry {
+            round_id: 0,
+            text_raw, 
+            msg_type: None,
+            created_at
+        }
     ) {
         Ok(results) => results,
         Err(e) => {
@@ -262,7 +275,7 @@ pub fn read_chatlog_rounds(
             format!(
                 "<!DOCTYPE html><html><head><title>SS13 Chat Log - Rounds {parsed_start_round}-{parsed_end_round}</title></head><body><div class=\"Chat\">{}</div></body></html>",
                 results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                     .collect::<Vec<String>>()
                     .join("\n"),
             )
@@ -273,7 +286,7 @@ pub fn read_chatlog_rounds(
             format!(
                 "{}",
                 results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{}</div>", msg))
+                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
                     .collect::<Vec<String>>()
                     .join("\n")
             )
