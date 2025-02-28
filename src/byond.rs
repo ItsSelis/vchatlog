@@ -4,6 +4,7 @@ use const_format::formatcp as const_format;
 use log::{debug, error, info};
 use meowtonin::ByondValue;
 use mysql::{params, prelude::Queryable};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::{database::get_mariadb_connection, html::parse_html};
@@ -42,6 +43,35 @@ fn get_round_id(byond_value: ByondValue) -> i32 {
         }
     }
 }
+
+#[byond_fn]
+pub fn generate_token(ckey: String) -> ByondValue {
+    info!("Writing access token for {ckey}");
+
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let mut rng = rand::rng();
+
+    let token: String = (0..32).map(|_| {
+        let i = rng.random_range(0..CHARSET.len());
+        CHARSET[i] as char
+    }).collect();
+
+    let mut conn = get_mariadb_connection();
+
+    let token_query = "INSERT INTO ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token";
+
+    if let Err(e) = conn.exec_drop(token_query, params!{
+        "ckey" => ckey.clone(),
+        "token" => token.clone()
+    }) {
+        error!("Error while trying to insert token: {e}");
+    };
+
+    info!("Written access token for {ckey}");
+
+    ByondValue::new_string(token)
+}
+
 
 /// Writes a new changelog to the database for a specific target (ckey).
 /// 
