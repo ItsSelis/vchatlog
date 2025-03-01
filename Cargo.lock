@@ -1955,6 +1955,7 @@ dependencies = [
  "mysql",
  "once_cell",
  "rand 0.9.0",
+ "regex",
  "serde",
  "serde_json",
  "simple-logging",

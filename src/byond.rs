@@ -1,7 +1,7 @@
-use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use const_format::formatcp as const_format;
-use log::{debug, error, info};
+use log::{debug, error};
 use meowtonin::ByondValue;
 use mysql::{params, prelude::Queryable};
 use rand::Rng;
@@ -46,7 +46,7 @@ fn get_round_id(byond_value: ByondValue) -> i32 {
 
 #[byond_fn]
 pub fn generate_token(ckey: String) -> ByondValue {
-    info!("Writing access token for {ckey}");
+    debug!("Writing access token for {ckey}");
 
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
@@ -58,7 +58,7 @@ pub fn generate_token(ckey: String) -> ByondValue {
 
     let mut conn = get_mariadb_connection();
 
-    let token_query = "INSERT INTO ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token";
+    let token_query = "INSERT INTO chatlogs_ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token";
 
     if let Err(e) = conn.exec_drop(token_query, params!{
         "ckey" => ckey.clone(),
@@ -67,7 +67,7 @@ pub fn generate_token(ckey: String) -> ByondValue {
         error!("Error while trying to insert token: {e}");
     };
 
-    info!("Written access token for {ckey}");
+    debug!("Written access token for {ckey}");
 
     ByondValue::new_string(token)
 }
@@ -93,7 +93,7 @@ pub fn write_chatlog(
     let parsed_data: crate::html::ParsedData = parse_html(message_html.to_string().as_str());
 
     // Insert ckey into database, if not existant already
-    let ckey_query = "INSERT IGNORE INTO ckeys (ckey) VALUES (:ckey)";
+    let ckey_query = "INSERT IGNORE INTO chatlogs_ckeys (ckey) VALUES (:ckey)";
     if let Err(e) = conn.exec_drop(ckey_query, params! {
         "ckey" => message_target.clone()
     }) {
@@ -101,7 +101,7 @@ pub fn write_chatlog(
     };
 
     // Insert chatlog into database
-    let log_query = "INSERT INTO chatlogs (round_id, target, text, text_raw, type, created_at) VALUES (:round_id, :target, :text, :text_raw, :type, :created_at)";
+    let log_query = "INSERT INTO chatlogs_logs (round_id, target, text, text_raw, type, created_at) VALUES (:round_id, :target, :text, :text_raw, :type, :created_at)";
     if let Err(e) = conn.exec_drop(log_query, params! {
         "round_id" => round_id,
         "target" => message_target.to_string(),
@@ -124,206 +124,6 @@ struct ChatlogEntry {
     created_at: u128
 }
 
-/// Reads the last n chatlogs of a specific ckey, in the order of how they had been written to the database, disregarding the round_id.
-/// 
-/// By default the length of the chatlogs to fetch is 1000.
-/// Set 'object' to true, to get a json result
-#[byond_fn]
-pub fn read_chatlog(
-    ckey: String,
-    length: ByondValue,
-    rendered: bool,
-    timestamp: bool,
-    object: bool
-) {
-    let mut conn = get_mariadb_connection();
-    let query = "SELECT round_id, text_raw, type, created_at FROM chatlogs WHERE target = :ckey ORDER BY ID ASC LIMIT :length";
-    
-    let length = length.get_number().unwrap_or_else(|_| 1000.0) as i32;
-    let results = match conn.exec_map(query,
-        params! {
-            "ckey" => ckey.clone(),
-            "length" => length
-        },
-        |(round_id, text_raw, msg_type, created_at)| { 
-            ChatlogEntry { 
-                round_id,
-                text_raw,
-                msg_type,
-                created_at
-            } 
-        }
-    ) {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Error while trying to get last {length} of chatlogs: {e}");
-            Vec::new()
-        }
-    };
-
-    info!("Exporting last {length} messages of {ckey}");
-    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
-    if object {
-        let json = match serde_json::to_string(&results) {
-            Ok(json) => json,
-            Err(e) => {
-                error!("Error while serializing json: {e}");
-                "".to_string()
-            }
-        };
-        fs::write(format!("data/chatlogs/{ckey}.json"), json).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length} as json): {e}") );
-    } else {
-        if rendered {
-            fs::write(
-                format!("data/chatlogs/{ckey}.html"), 
-                format!(
-                    "<!DOCTYPE html><html><head><title>SS13 Chat Log</title></head><body><div class=\"Chat\">{}</div></body></html>",
-                    results.iter()
-                        .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                        .collect::<Vec<String>>()
-                        .join("\n"),
-                )
-            ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
-        } else {
-            fs::write(
-                format!("data/chatlogs/{ckey}"), 
-                format!(
-                    "{}",
-                    results.iter()
-                        .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                        .collect::<Vec<String>>()
-                        .join("\n")
-                )
-            ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file (last {length}): {e}") );
-        }
-    }
-}
-
-/// Reads the chatlogs of a specific ckey for a specified round_id.
-/// 
-/// DANGER: Do not give it the round_id of -1 if you did not have round id's set up for a long time. 
-///         Otherwise you might get many results.
-#[byond_fn]
-pub fn read_chatlog_round(
-    ckey: String,
-    round_id: ByondValue,
-    timestamp: bool,
-    rendered: bool
-) {
-    let mut conn = get_mariadb_connection();
-    let query = "SELECT text_raw, created_at FROM chatlogs WHERE round_id = :round_id AND target = :ckey ORDER BY ID ASC";
-
-    let parsed_round_id = get_round_id(round_id);
-    let results = match conn.exec_map(query,
-        params! {
-            "round_id" => parsed_round_id,
-            "ckey" => ckey.clone()
-        },
-        |(text_raw, created_at)| ChatlogEntry {
-            round_id: 0,
-            text_raw, 
-            msg_type: None,
-            created_at
-        }
-    ) {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Error while trying to get chatlogs for round {parsed_round_id}: {e}");
-            Vec::new()
-        }
-    };
-
-    info!("Exporting chatlog for {ckey} for round {parsed_round_id}");
-    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
-    if rendered {
-        fs::write(
-            format!("data/chatlogs/{ckey}-{parsed_round_id}.html"), 
-            format!(
-                "<!DOCTYPE html><html><head><title>SS13 Chat Log - Round {parsed_round_id}</title></head><body><div class=\"Chat\">{}</div></body></html>",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                    .collect::<Vec<String>>()
-                    .join("\n"),
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for round {parsed_round_id}: {e}") );
-    } else {
-        fs::write(
-            format!("data/chatlogs/{ckey}-{parsed_round_id}"), 
-            format!(
-                "{}",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for round {parsed_round_id}: {e}") );
-    }
-}
-
-/// Reads the chatlogs of a specific ckey for a specified range of rounds (start to end, both inclusive).
-/// 
-/// DANGER: Do not give it the round_id of -1 if you did not have round id's set up for a long time. 
-///         Otherwise you might get many results.
-#[byond_fn]
-pub fn read_chatlog_rounds(
-    ckey: String,
-    start_round: ByondValue,
-    end_round: ByondValue,
-    timestamp: bool,
-    rendered: bool
-) {
-    let mut conn = get_mariadb_connection();
-    let query = "SELECT text_raw, created_at FROM chatlogs WHERE round_id BETWEEN :start_round AND :end_round AND target = :ckey ORDER BY ID ASC";
-
-    let parsed_start_round = get_round_id(start_round);
-    let parsed_end_round = get_round_id(end_round);
-    let results = match conn.exec_map(query,
-        params! {
-            "start_round" => parsed_start_round,
-            "end_round" => parsed_end_round,
-            "ckey" => ckey.clone()
-        },
-        |(text_raw, created_at)| ChatlogEntry {
-            round_id: 0,
-            text_raw, 
-            msg_type: None,
-            created_at
-        }
-    ) {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Error while trying to get chatlogs for rounds {parsed_start_round}-{parsed_end_round}: {e}");
-            Vec::new()
-        }
-    };
-
-    info!("Exporting chatlog for {ckey} for rounds {parsed_start_round}-{parsed_end_round}");
-    fs::create_dir_all("data/chatlogs").unwrap_or_else(|e| error!("Error while trying to create temporary chatlogs directory: {e}"));
-    if rendered {
-        fs::write(
-            format!("data/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}.html"), 
-            format!(
-                "<!DOCTYPE html><html><head><title>SS13 Chat Log - Rounds {parsed_start_round}-{parsed_end_round}</title></head><body><div class=\"Chat\">{}</div></body></html>",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                    .collect::<Vec<String>>()
-                    .join("\n"),
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for rounds {parsed_start_round}-{parsed_end_round}: {e}") );
-    } else {
-        fs::write(
-            format!("data/chatlogs/{ckey}-{parsed_start_round}-{parsed_end_round}"), 
-            format!(
-                "{}",
-                results.iter()
-                    .map(|msg| format!("<div class=\"ChatMessage\">{} {}</div>", if timestamp { msg.created_at.to_string() } else { "".to_string() }, msg.text_raw))
-                    .collect::<Vec<String>>()
-                    .join("\n")
-            )
-        ).unwrap_or_else(|e| error!("Error while trying to write chatlogs to file for rounds {parsed_start_round}-{parsed_end_round}: {e}") );
-    }
-}
-
 /// Returns the 10 most recent round ids that have logs recorded.
 #[byond_fn]
 pub fn get_recent_roundids(
@@ -332,7 +132,7 @@ pub fn get_recent_roundids(
     let mut conn = get_mariadb_connection();
     let query = "WITH ranked_rounds AS (
             SELECT id, round_id, ROW_NUMBER() OVER (PARTITION BY round_id ORDER BY id DESC) AS rn
-            FROM chatlogs 
+            FROM chatlogs_logs 
             WHERE target = :ckey
         )
         SELECT round_id FROM ranked_rounds WHERE rn = 1 ORDER BY id DESC LIMIT 10";

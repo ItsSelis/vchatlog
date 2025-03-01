@@ -1,8 +1,9 @@
 use const_format::formatcp as const_format;
-use log::{error, info, warn, LevelFilter};
+use log::{error, info, LevelFilter};
 use mysql::{Pool, PooledConn};
 use once_cell::sync::Lazy;
-use std::{fs, sync::Arc};
+use regex::Regex;
+use std::{collections::HashMap, fs::File, io::{prelude::*, BufReader}, sync::Arc};
 
 static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
     simple_logging::log_to_file("vchatlog.log", LevelFilter::Info).unwrap();
@@ -12,13 +13,39 @@ static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
         version = env!("CARGO_PKG_VERSION")
     ));
 
-    // Clean up old stuff
-    fs::remove_dir_all("data/chatlogs").unwrap_or_else(|e| warn!("Error while trying to delete temporary chatlogs directory: {e}"));
+    let dbconfig = File::open("config/dbconfig.txt").unwrap_or_else(|e| {
+        error!("Error while trying to read database configuration: {e}");
+        std::process::exit(1);
+    });
 
-    let db_user = std::env::var("DB_USER").expect("environment variable DB_USER");
-    let db_pass = std::env::var("DB_PASS").expect("environment variable DB_PASS");
-    let db_host = std::env::var("DB_HOST").expect("environment variable DB_HOST");
-    let db_database = std::env::var("DB_DATABASE").expect("environment variable DB_DATABASE");
+    let reader = BufReader::new(dbconfig);
+
+    let array: Vec<&str> = vec!["ADDRESS", "PORT", "FEEDBACK_DATABASE", "FEEDBACK_LOGIN", "FEEDBACK_PASSWORD"];
+    let mut config_map: HashMap<&str, String> = Default::default();
+
+    for line in reader.lines() {
+        match line {
+            Ok(line) => {
+                for entry in &array {
+                    let re = Regex::new(&format!("^{entry} (.*?)$")).unwrap_or_else(|e| {
+                        error!("Error while setting up regex: {e}");
+                        std::process::exit(1);
+                    });
+
+                    let caps = re.captures(&line);
+                    if caps.is_some() {
+                        config_map.insert(&entry, caps.unwrap().get(1).unwrap().as_str().to_string());
+                    }
+                }
+            },
+            Err(e) => error!("Error while leading line from config/dbconfig.txt: {e}")
+        }
+    }
+
+    let db_user = config_map.get("FEEDBACK_LOGIN").unwrap();
+    let db_pass = config_map.get("FEEDBACK_PASSWORD").unwrap();
+    let db_host = format!("{}:{}", config_map.get("ADDRESS").unwrap(), config_map.get("PORT").unwrap());
+    let db_database = config_map.get("FEEDBACK_DATABASE").unwrap();
 
     let url = format!("mysql://{db_user}:{db_pass}@{db_host}/{db_database}");
 
