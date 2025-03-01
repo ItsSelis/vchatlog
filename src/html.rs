@@ -3,7 +3,7 @@ use kuchiki::NodeRef;
 
 pub struct ParsedData {
     pub classes: Vec<String>,
-    pub text: String
+    pub text: String,
 }
 
 /// Parses a given html string and returns a vector of classes used (different styles/spans), and the plain text.
@@ -11,7 +11,7 @@ pub fn parse_html(html: &str) -> ParsedData {
     let document = kuchiki::parse_html().one(html);
     let mut parsed_data = ParsedData {
         classes: Vec::new(),
-        text: String::new()
+        text: String::new(),
     };
 
     walk(&document, &mut parsed_data);
@@ -30,10 +30,15 @@ fn walk(node: &NodeRef, data: &mut ParsedData) {
         // TODO: The proper parsing of this is currently broken
         if tag_name == "img" {
             let attrs = element.attributes.borrow();
-            let img_tag = format!("<img {}>", attrs.map.iter()
-                .map(|(k, v)| format!("{:?}=\"{:?}\"", k, v))
-                .collect::<Vec<_>>()
-                .join(" "));
+            let img_tag = format!(
+                "<img {}>",
+                attrs
+                    .map
+                    .iter()
+                    .map(|(k, v)| format!("{:?}=\"{:?}\"", k, v))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             data.text.push_str(&img_tag);
         }
     }

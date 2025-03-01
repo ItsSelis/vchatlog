@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{database::get_mariadb_connection, html::parse_html};
 
 /// This function tries to resolves the round_id (as an integer) from the supplied ByondValue.
-/// 
+///
 /// NOTE: By default, if the round id's are not set up or some other error occurs, the function will return -1
 fn get_round_id(byond_value: ByondValue) -> i32 {
     if byond_value == ByondValue::null() {
@@ -26,13 +26,11 @@ fn get_round_id(byond_value: ByondValue) -> i32 {
             }
         } else {
             match byond_value.get_string() {
-                Ok(str_value) => {
-                    match str_value.parse::<i32>() {
-                        Ok(num) => num,
-                        Err(e) => {
-                            error!("Failed to parse string '{str_value}' to i32: {e}");
-                            -1
-                        }
+                Ok(str_value) => match str_value.parse::<i32>() {
+                    Ok(num) => num,
+                    Err(e) => {
+                        error!("Failed to parse string '{str_value}' to i32: {e}");
+                        -1
                     }
                 },
                 Err(e) => {
@@ -51,19 +49,24 @@ pub fn generate_token(ckey: String) -> ByondValue {
     const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let mut rng = rand::rng();
 
-    let token: String = (0..32).map(|_| {
-        let i = rng.random_range(0..CHARSET.len());
-        CHARSET[i] as char
-    }).collect();
+    let token: String = (0..32)
+        .map(|_| {
+            let i = rng.random_range(0..CHARSET.len());
+            CHARSET[i] as char
+        })
+        .collect();
 
     let mut conn = get_mariadb_connection();
 
     let token_query = "INSERT INTO chatlogs_ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token";
 
-    if let Err(e) = conn.exec_drop(token_query, params!{
-        "ckey" => ckey.clone(),
-        "token" => token.clone()
-    }) {
+    if let Err(e) = conn.exec_drop(
+        token_query,
+        params! {
+            "ckey" => ckey.clone(),
+            "token" => token.clone()
+        },
+    ) {
         error!("Error while trying to insert token: {e}");
     };
 
@@ -72,16 +75,15 @@ pub fn generate_token(ckey: String) -> ByondValue {
     ByondValue::new_string(token)
 }
 
-
 /// Writes a new changelog to the database for a specific target (ckey).
-/// 
+///
 /// NOTE: By default, if round id's are not set up, the round id is -1.
 #[byond_fn]
 pub fn write_chatlog(
     message_target: String,
     message_html: String,
     message_round_id: ByondValue,
-    message_type: String
+    message_type: String,
 ) {
     let round_id = get_round_id(message_round_id);
 
@@ -94,9 +96,12 @@ pub fn write_chatlog(
 
     // Insert ckey into database, if not existant already
     let ckey_query = "INSERT IGNORE INTO chatlogs_ckeys (ckey) VALUES (:ckey)";
-    if let Err(e) = conn.exec_drop(ckey_query, params! {
-        "ckey" => message_target.clone()
-    }) {
+    if let Err(e) = conn.exec_drop(
+        ckey_query,
+        params! {
+            "ckey" => message_target.clone()
+        },
+    ) {
         error!("Error while trying to insert ckey: {e}");
     };
 
@@ -121,14 +126,12 @@ struct ChatlogEntry {
     round_id: i32,
     text_raw: String,
     msg_type: Option<String>,
-    created_at: u128
+    created_at: u128,
 }
 
 /// Returns the 10 most recent round ids that have logs recorded.
 #[byond_fn]
-pub fn get_recent_roundids(
-    ckey: String
-) -> Vec<ByondValue> {
+pub fn get_recent_roundids(ckey: String) -> Vec<ByondValue> {
     let mut conn = get_mariadb_connection();
     let query = "WITH ranked_rounds AS (
             SELECT id, round_id, ROW_NUMBER() OVER (PARTITION BY round_id ORDER BY id DESC) AS rn
@@ -137,11 +140,12 @@ pub fn get_recent_roundids(
         )
         SELECT round_id FROM ranked_rounds WHERE rn = 1 ORDER BY id DESC LIMIT 10";
 
-    let results: Vec<i32> = match conn.exec_map(query, 
+    let results: Vec<i32> = match conn.exec_map(
+        query,
         params! {
             "ckey" => ckey.clone()
         },
-        |round_id| (round_id)
+        |round_id| (round_id),
     ) {
         Ok(results) => results,
         Err(e) => {
