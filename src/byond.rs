@@ -29,13 +29,10 @@ fn get_round_id(value: ByondValue) -> i32 {
                         .parse::<i32>()
                         .map_err(|err| format!("Failed to parse string '{string}' to i32: {err}"))
                 }),
-            _ => {
-                error!(
-                    "round_id ByondValue was not a valid type ({value_type}, {value})",
-                    value_type = value_type.name()
-                );
-                Ok(-1)
-            }
+            _ => Err(format!(
+                "round_id ByondValue was not a valid type ({value_type}, {value})",
+                value_type = value_type.name()
+            )),
         }
     }
 
