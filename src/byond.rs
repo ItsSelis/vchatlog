@@ -2,9 +2,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use const_format::formatcp as const_format;
 use log::{debug, error};
-use meowtonin::ByondValue;
+use meowtonin::{ByondValue, ByondValueType};
 use mysql::{params, prelude::Queryable};
-use rand::Rng;
+use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
 
 use crate::{database::get_mariadb_connection, html::parse_html};
@@ -12,32 +12,35 @@ use crate::{database::get_mariadb_connection, html::parse_html};
 /// This function tries to resolves the round_id (as an integer) from the supplied ByondValue.
 ///
 /// NOTE: By default, if the round id's are not set up or some other error occurs, the function will return -1
-fn get_round_id(byond_value: ByondValue) -> i32 {
-    if byond_value == ByondValue::null() {
-        -1
-    } else {
-        if byond_value.is_number() {
-            match byond_value.get_number() {
-                Ok(num) => num.trunc() as i32,
-                Err(e) => {
-                    error!("Failed to get number from ByondValue for round_id: {e}");
-                    -1
-                }
-            }
-        } else {
-            match byond_value.get_string() {
-                Ok(str_value) => match str_value.parse::<i32>() {
-                    Ok(num) => num,
-                    Err(e) => {
-                        error!("Failed to parse string '{str_value}' to i32: {e}");
-                        -1
-                    }
-                },
-                Err(e) => {
-                    error!("Failed to get string from ByondValue for round_id: {e}");
-                    -1
-                }
-            }
+fn get_round_id(value: ByondValue) -> i32 {
+    fn get_round_id_inner(value: ByondValue) -> Result<i32, String> {
+        let value_type = value.get_type();
+        match value_type {
+            ByondValueType::NULL => Ok(-1),
+            ByondValueType::NUMBER => value
+                .get_number()
+                .map_err(|err| format!("Failed to get number from ByondValue for round_id: {err}"))
+                .map(|num| num.trunc() as i32),
+            ByondValueType::STRING => value
+                .get_string()
+                .map_err(|err| format!("Failed to get string from ByondValue for round_id: {err}"))
+                .and_then(|string| {
+                    string
+                        .parse::<i32>()
+                        .map_err(|err| format!("Failed to parse string '{string}' to i32: {err}"))
+                }),
+            _ => Err(format!(
+                "round_id ByondValue was not a valid type ({value_type}, {value})",
+                value_type = value_type.name()
+            )),
+        }
+    }
+
+    match get_round_id_inner(value) {
+        Ok(id) => id,
+        Err(err) => {
+            error!("{err}");
+            -1
         }
     }
 }
@@ -45,16 +48,7 @@ fn get_round_id(byond_value: ByondValue) -> i32 {
 #[byond_fn]
 pub fn generate_token(ckey: String) -> ByondValue {
     debug!("Writing access token for {ckey}");
-
-    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let mut rng = rand::rng();
-
-    let token: String = (0..32)
-        .map(|_| {
-            let i = rng.random_range(0..CHARSET.len());
-            CHARSET[i] as char
-        })
-        .collect();
+    let token = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
     let mut conn = get_mariadb_connection();
 
