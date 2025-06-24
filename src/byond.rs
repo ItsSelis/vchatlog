@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use const_format::formatcp as const_format;
 use log::{debug, error};
-use meowtonin::{ByondValue, ByondValueType};
+use meowtonin::{byond_fn, ByondValue, ByondValueType};
 use mysql::{params, prelude::Queryable};
 use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
@@ -86,7 +86,7 @@ pub fn write_chatlog(
     // Prepare database for entry
     let mut conn = get_mariadb_connection();
 
-    let parsed_data: crate::html::ParsedData = parse_html(message_html.to_string().as_str());
+    let parsed_data = parse_html(message_html.as_str());
 
     // Insert ckey into database, if not existant already
     let ckey_query = "INSERT IGNORE INTO chatlogs_ckeys (ckey) VALUES (:ckey)";
@@ -103,9 +103,9 @@ pub fn write_chatlog(
     let log_query = "INSERT INTO chatlogs_logs (round_id, target, text, text_raw, type, created_at) VALUES (:round_id, :target, :text, :text_raw, :type, :created_at)";
     if let Err(e) = conn.exec_drop(log_query, params! {
         "round_id" => round_id,
-        "target" => message_target.to_string(),
+        "target" => message_target.clone(),
         "text" => parsed_data.text,
-        "text_raw" => message_html.to_string(),
+        "text_raw" => message_html.clone(),
         "type" => if message_type.is_empty() { None } else { Some(message_type) },
         "created_at" => SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_else(|_| std::time::Duration::new(0, 0)).as_millis()
     }) {

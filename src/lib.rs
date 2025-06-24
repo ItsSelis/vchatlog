@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate meowtonin;
-
 mod database;
 mod html;
 

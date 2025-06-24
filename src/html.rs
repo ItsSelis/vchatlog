@@ -24,7 +24,7 @@ fn walk(node: &NodeRef, data: &mut ParsedData) {
         let tag_name = element.name.local.to_string();
 
         if let Some(class_attr) = element.attributes.borrow().get("class") {
-            data.classes.push(class_attr.to_string());
+            data.classes.push(class_attr.to_owned());
         }
 
         // TODO: The proper parsing of this is currently broken

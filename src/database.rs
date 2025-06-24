@@ -1,16 +1,15 @@
 use const_format::formatcp as const_format;
 use log::{error, info, trace, LevelFilter};
 use mysql::{Pool, PooledConn};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::{
     collections::HashMap,
     fs::File,
     io::{prelude::*, BufReader},
-    sync::Arc,
+    sync::LazyLock,
 };
 
-static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
+static SQL_CONNECTION: LazyLock<Pool> = LazyLock::new(|| {
     simple_logging::log_to_file("vchatlog.log", LevelFilter::Info).unwrap();
     info!(
         "{}",
@@ -28,22 +27,21 @@ static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
 
     let reader = BufReader::new(dbconfig);
 
-    let mut config_map: HashMap<String, String> = Default::default();
+    let mut config_map: HashMap<String, String> = HashMap::default();
 
+    let re = Regex::new("^([A-Z_]+) (.*?)$").unwrap_or_else(|e| {
+        error!("Error while setting up regex: {e}");
+        std::process::exit(1);
+    });
     for line in reader.lines() {
         match line {
             Ok(line) => {
-                let re = Regex::new(&format!("^([A-Z_]+) (.*?)$")).unwrap_or_else(|e| {
-                    error!("Error while setting up regex: {e}");
-                    std::process::exit(1);
-                });
-
                 match re.captures(&line).ok_or("no match") {
                     Ok(caps) => {
                         let key = caps.get(1).unwrap().as_str();
                         let val = caps.get(2).unwrap().as_str();
 
-                        config_map.insert(key.to_string(), val.to_string());
+                        config_map.insert(key.to_owned(), val.to_owned());
                     },
                     Err(e) => trace!("Match error: {e}")
                 }
@@ -66,7 +64,7 @@ static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
     match Pool::new(url.as_str()) {
         Ok(p) => {
             info!("MariaDB/MySQL connection established.");
-            Arc::new(p)
+            p
         }
         Err(e) => {
             error!("Failed to connect to MariaDB/MySQL: {}", e);
@@ -77,7 +75,7 @@ static SQL_CONNECTION: Lazy<Arc<Pool>> = Lazy::new(|| {
 
 /// Returns the current database connection the library was initialized with.
 pub fn get_mariadb_connection() -> PooledConn {
-    match Arc::clone(&SQL_CONNECTION).get_conn() {
+    match SQL_CONNECTION.get_conn() {
         Ok(conn) => conn,
         Err(e) => {
             error!("Error while trying to get database connection: {e}");

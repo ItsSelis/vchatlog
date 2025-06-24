@@ -1,7 +1,9 @@
 [package]
 name = "vchatlog"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ItsSelis/vchatlog"
 
 [lib]
 crate-type = ["cdylib"]
@@ -19,12 +21,26 @@ opt-level = 0
 const_format = "0.2.34"
 kuchiki = "0.8.1"
 log = "0.4.25"
-meowtonin = { git = "https://github.com/Absolucy/meowtonin.git" }
+meowtonin = { git = "https://github.com/Absolucy/meowtonin.git", branch = "516", features = ["byond-1664"] }
 mysql = { git = "https://github.com/ZeWaka/rust-mysql-simple.git", tag = "v26.0.0" }
-# mongodb = { version = "3.2.1", features = ["sync"] }
-once_cell = "1.20.2"
 rand = "0.9.0"
 regex = "1.11.1"
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.139"
 simple-logging = "2.0.2"
+
+[lints.clippy]
+# presets
+complexity = "warn"
+correctness = "warn"
+perf = "warn"
+style = "warn"
+suspicious = "warn"
+# individual lints
+assigning_clones = "warn"
+create_dir = "warn"
+default_trait_access = "warn"
+inefficient_to_string = "warn"
+redundant_type_annotations = "warn"
+str_to_string = "warn"
+string_to_string = "warn"
