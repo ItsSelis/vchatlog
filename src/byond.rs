@@ -46,7 +46,9 @@ fn get_round_id(value: ByondValue) -> i32 {
 }
 
 #[byond_fn]
-pub fn generate_token(ckey: String) -> ByondValue {
+pub fn generate_token(ckey: String, message_round_id: ByondValue) -> ByondValue {
+    let round_id = get_round_id(message_round_id);
+
     debug!("Writing access token for {ckey}");
     let token = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
@@ -65,6 +67,18 @@ pub fn generate_token(ckey: String) -> ByondValue {
     };
 
     debug!("Written access token for {ckey}");
+
+    // Call the procedure that inserts the round id into the rounds table, and deletes the oldest round if there are more than 10 rounds for this ckey.
+    let round_query = "CALL chatlogs_rounds_insert(:round_id, :ckey)";
+    if let Err(e) = conn.exec_drop(
+        round_query,
+        params! {
+            "round_id" => round_id,
+            "ckey" => ckey
+        },
+    ) {
+        error!("Error while trying to insert round id to chatlogs_rounds: {e}");
+    };
 
     ByondValue::new_string(token)
 }
@@ -96,7 +110,20 @@ pub fn write_chatlog(
             "ckey" => message_target.clone()
         },
     ) {
-        error!("Error while trying to insert ckey: {e}");
+        error!("Error while trying to insert ckey to chatlogs_ckeys: {e}");
+    };
+
+    // Call the procedure that inserts the round id into the rounds table, and deletes the oldest round if there are more than 10 rounds for this ckey.
+    // Just to make sure it really is inserted.
+    let round_query = "CALL chatlogs_rounds_insert(:round_id, :ckey)";
+    if let Err(e) = conn.exec_drop(
+        round_query,
+        params! {
+            "round_id" => round_id,
+            "ckey" => message_target.clone()
+        },
+    ) {
+        error!("Error while trying to insert round id to chatlogs_rounds: {e}");
     };
 
     // Insert chatlog into database
@@ -127,12 +154,7 @@ struct ChatlogEntry {
 #[byond_fn]
 pub fn get_recent_roundids(ckey: String) -> Vec<ByondValue> {
     let mut conn = get_mariadb_connection();
-    let query = "WITH ranked_rounds AS (
-            SELECT id, round_id, ROW_NUMBER() OVER (PARTITION BY round_id ORDER BY id DESC) AS rn
-            FROM chatlogs_logs 
-            WHERE target = :ckey
-        )
-        SELECT round_id FROM ranked_rounds WHERE rn = 1 ORDER BY id DESC LIMIT 10";
+    let query = "SELECT round_id FROM chatlogs_rounds WHERE ckey = :ckey ORDER BY round_id DESC LIMIT 10";
 
     let results: Vec<i32> = match conn.exec_map(
         query,
