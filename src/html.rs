@@ -6,7 +6,7 @@ pub struct ParsedData {
     pub text: String,
 }
 
-/// Parses a given html string and returns a vector of classes used (different styles/spans), and the plain text.
+/// Parses a given HTML string and returns a vector of classes used (different styles/spans), and the plain text.
 pub fn parse_html(html: &str) -> ParsedData {
     let document = kuchiki::parse_html().one(html);
     let mut parsed_data = ParsedData {

@@ -5,23 +5,22 @@ use log::{debug, error};
 use meowtonin::{byond_fn, ByondValue, ByondValueType};
 use mysql::{params, prelude::Queryable};
 use rand::distr::{Alphanumeric, SampleString};
-use serde::{Deserialize, Serialize};
 
 use crate::{database::get_mariadb_connection, html::parse_html};
 
-/// This function tries to resolves the round_id (as an integer) from the supplied ByondValue.
+/// This function tries to resolve the round_id (as an integer) from the supplied ByondValue.
 ///
-/// NOTE: By default, if the round id's are not set up or some other error occurs, the function will return -1
+/// NOTE: By default, if the round ids are not set up or some other error occurs, the function will return -1
 fn get_round_id(value: ByondValue) -> i32 {
     fn get_round_id_inner(value: ByondValue) -> Result<i32, String> {
         let value_type = value.get_type();
         match value_type {
-            ByondValueType::NULL => Ok(-1),
-            ByondValueType::NUMBER => value
+            ByondValueType::Null => Ok(-1),
+            ByondValueType::Number => value
                 .get_number()
                 .map_err(|err| format!("Failed to get number from ByondValue for round_id: {err}"))
                 .map(|num| num.trunc() as i32),
-            ByondValueType::STRING => value
+            ByondValueType::String => value
                 .get_string()
                 .map_err(|err| format!("Failed to get string from ByondValue for round_id: {err}"))
                 .and_then(|string| {
@@ -36,13 +35,10 @@ fn get_round_id(value: ByondValue) -> i32 {
         }
     }
 
-    match get_round_id_inner(value) {
-        Ok(id) => id,
-        Err(err) => {
-            error!("{err}");
-            -1
-        }
-    }
+    get_round_id_inner(value).unwrap_or_else(|err| {
+        error!("{err}");
+        -1
+    })
 }
 
 #[byond_fn]
@@ -85,7 +81,7 @@ pub fn generate_token(ckey: String, message_round_id: ByondValue) -> ByondValue 
 
 /// Writes a new changelog to the database for a specific target (ckey).
 ///
-/// NOTE: By default, if round id's are not set up, the round id is -1.
+/// NOTE: By default, if round ids are not set up, the round id is -1.
 #[byond_fn]
 pub fn write_chatlog(
     message_target: String,
@@ -102,7 +98,7 @@ pub fn write_chatlog(
 
     let parsed_data = parse_html(message_html.as_str());
 
-    // Insert ckey into database, if not existant already
+    // Insert ckey into database, if not existent already
     let ckey_query = "INSERT IGNORE INTO chatlogs_ckeys (ckey) VALUES (:ckey)";
     if let Err(e) = conn.exec_drop(
         ckey_query,
@@ -142,33 +138,22 @@ pub fn write_chatlog(
     debug!("Written chatlog for {message_target} ({round_id}): {message_html}");
 }
 
-#[derive(Serialize, Deserialize)]
-struct ChatlogEntry {
-    round_id: i32,
-    text_raw: String,
-    msg_type: Option<String>,
-    created_at: u128,
-}
-
 /// Returns the 10 most recent round ids that have logs recorded.
 #[byond_fn]
 pub fn get_recent_roundids(ckey: String) -> Vec<ByondValue> {
     let mut conn = get_mariadb_connection();
     let query = "SELECT round_id FROM chatlogs_rounds WHERE ckey = :ckey ORDER BY round_id DESC LIMIT 10";
 
-    let results: Vec<i32> = match conn.exec_map(
+    let results: Vec<i32> = conn.exec_map(
         query,
         params! {
             "ckey" => ckey.clone()
         },
-        |round_id| (round_id),
-    ) {
-        Ok(results) => results,
-        Err(e) => {
-            error!("Error while trying to get recent round ids for {ckey}: {e}");
-            Vec::new()
-        }
-    };
+        |round_id| round_id,
+    ).unwrap_or_else(|e| {
+        error!("Error while trying to get recent round ids for {ckey}: {e}");
+        Vec::new()
+    });
 
     let byond_list: Vec<ByondValue> = results
         .iter()

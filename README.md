@@ -18,12 +18,16 @@ The meowtonin library requires the proper clang libraries, which can be installe
 winget LLVM.LLVM
 ```
 
-# Complilation
+# Compilation
 
 ```
 # Linux
 cargo build --release --target i686-unknown-linux-gnu
+## Or with cargo-zigbuild
+cargo zigbuild --release --target i686-unknown-linux-gnu
 
 # Windows
 cargo build --release --target i686-pc-windows-msvc
+## Or with cargo-zigbuild
+cargo zigbuild --release --target i686-pc-windows-msvc
 ```

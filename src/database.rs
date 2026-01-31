@@ -75,11 +75,8 @@ static SQL_CONNECTION: LazyLock<Pool> = LazyLock::new(|| {
 
 /// Returns the current database connection the library was initialized with.
 pub fn get_mariadb_connection() -> PooledConn {
-    match SQL_CONNECTION.get_conn() {
-        Ok(conn) => conn,
-        Err(e) => {
-            error!("Error while trying to get database connection: {e}");
-            panic!("Error while trying to get database connection: {e}")
-        }
-    }
+    SQL_CONNECTION.get_conn().unwrap_or_else(|e| {
+        error!("Error while trying to get database connection: {e}");
+        panic!("Error while trying to get database connection: {e}")
+    })
 }
