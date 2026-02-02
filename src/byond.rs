@@ -41,22 +41,48 @@ fn get_round_id(value: ByondValue) -> i32 {
     })
 }
 
+fn encode_vec(vec: &Vec<String>) -> String {
+    vec.join("|")
+}
+
+fn decode_vec(s: &str) -> Vec<String> {
+    if s.is_empty() {
+        Vec::new()
+    } else {
+        s.split("|").map(String::from).collect()
+    }
+}
+
 #[byond_fn]
 pub fn generate_token(ckey: String, message_round_id: ByondValue) -> ByondValue {
     let round_id = get_round_id(message_round_id);
 
     debug!("Writing access token for {ckey}");
-    let token = Alphanumeric.sample_string(&mut rand::rng(), 32);
+    let new_token = Alphanumeric.sample_string(&mut rand::rng(), 32);
 
     let mut conn = get_mariadb_connection();
 
-    let token_query = "INSERT INTO chatlogs_ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token";
+    let row: String = conn.exec_first(
+        "SELECT token FROM chatlogs_ckeys WHERE ckey = :ckey",
+        params! {
+            "ckey" => ckey.clone()
+        }
+    ).ok().flatten().unwrap_or_default();
 
+    let mut tokens: Vec<String> = decode_vec(&row);
+    if tokens.len() == 2 {
+        tokens[0] = tokens[1].clone();
+        tokens[1] = new_token;
+    } else {
+        tokens.push(new_token);
+    }
+
+    let encoded_tokens = encode_vec(&tokens);
     if let Err(e) = conn.exec_drop(
-        token_query,
+        "INSERT INTO chatlogs_ckeys (ckey, token) VALUES (:ckey, :token) ON DUPLICATE KEY UPDATE token = :token",
         params! {
             "ckey" => ckey.clone(),
-            "token" => token.clone()
+            "token" => encoded_tokens.to_owned()
         },
     ) {
         error!("Error while trying to insert token: {e}");
@@ -76,7 +102,8 @@ pub fn generate_token(ckey: String, message_round_id: ByondValue) -> ByondValue 
         error!("Error while trying to insert round id to chatlogs_rounds: {e}");
     };
 
-    ByondValue::new_string(token)
+    // Let's try to give byond the newest token we have in our storage.
+    ByondValue::new_string(if tokens.len() == 2 { tokens[1].clone() } else { tokens[0].clone() })
 }
 
 /// Writes a new changelog to the database for a specific target (ckey).
