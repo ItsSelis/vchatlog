@@ -23,7 +23,7 @@ kuchiki = "0.8.1"
 log = "0.4.29"
 meowtonin = { git = "https://github.com/Absolucy/meowtonin.git", branch = "oh-god-why" }
 mysql = { git = "https://github.com/ZeWaka/rust-mysql-simple.git", tag = "v26.0.0" }
-rand = "0.9.1"
+rand = "0.9.3"
 regex = "1.12.2"
 simple-logging = "2.0.2"
 
